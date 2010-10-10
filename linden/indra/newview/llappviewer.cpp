@@ -61,7 +61,7 @@
 #include "llviewerwindow.h"
 #include "llviewerdisplay.h"
 #include "llviewermedia.h"
-
+#include "llv4math.h"		// for LL_VECTORIZE
 
 #include "llviewermessage.h"
 #include "llviewerobjectlist.h"
@@ -1185,6 +1185,19 @@ bool LLAppViewer::cleanup()
 
 	llinfos << "Viewer disconnected" << llendflush;
 
+	if (!mQuitRequested)			//not doing it on quit, because the quitting voiceclient
+	{					//*might* crash imprudence TODO: fix the voiceclient instead
+		//this deletes all your buddies
+		LLAvatarTracker::instance().reset();
+		// reset group data. Blame LL for the need to clear a member variable through a global
+		LLGroupMgr::getInstance()->clearGroups();
+		gAgent.mGroups.clear();
+	}
+
+	//reset balance for not playing the UI-Sound 
+	//when relogging into another account 
+	gStatusBar->clearBalance();
+
 	if (mQuitRequested)
 	{
 		display_cleanup();
@@ -1457,8 +1470,11 @@ bool LLAppViewer::cleanup()
 		pending += LLAppViewer::getTextureFetch()->update(1); // unpauses the texture fetch thread
 		pending += LLVFSThread::updateClass(0);
 		pending += LLLFSThread::updateClass(0);
-		F64 idle_time = idleTimer.getElapsedTimeF64();
-		if (!pending || idle_time >= max_idle_time)
+		if (pending == 0)
+		{
+			break;
+		}
+		if (idleTimer.getElapsedTimeF64() >= max_idle_time)
 		{
 			llwarns << "Quitting with pending background tasks." << llendl;
 			break;
@@ -3719,8 +3735,16 @@ void LLAppViewer::idleShutdown()
 	else
 	{
 		mQuitRequested=true;
-//awfixme
 		forceQuit();
+	}
+
+
+	static bool saved_snapshot = false;
+	if (!saved_snapshot)
+	{
+		saved_snapshot = true;
+		saveFinalSnapshot();
+		return;
 	}
 
 	// Attempt to close all floaters that might be
@@ -3729,6 +3753,13 @@ void LLAppViewer::idleShutdown()
 	{
 		// application is quitting
 		gFloaterView->closeAllChildren(true);
+	}
+	
+	// extra invitation to the Snapshot Floater 
+	// not to show on the loginscreen when relogging
+	if (gSnapshotFloaterView)
+	{
+		gSnapshotFloaterView->closeAllChildren(true);
 	}
 
 	// close IM interface
@@ -3746,13 +3777,7 @@ void LLAppViewer::idleShutdown()
 		return;
 	}
 
-	static bool saved_snapshot = false;
-	if (!saved_snapshot)
-	{
-		saved_snapshot = true;
-		saveFinalSnapshot();
-		return;
-	}
+
 
 	const F32 SHUTDOWN_UPLOAD_SAVE_TIME = 5.f;
 
@@ -4146,9 +4171,10 @@ void LLAppViewer::resumeMainloopTimeout(const std::string& state, F32 secs)
 	{
 		if(secs < 0.0f)
 		{
-			secs = gSavedSettings.getF32("MainloopTimeoutDefault");
+			static F32 *sMainloopTimeoutDefault = rebind_llcontrol<F32>("MainloopTimeoutDefault", &gSavedSettings, true);
+			secs = *sMainloopTimeoutDefault;
 		}
-		
+
 		mMainloopTimeout->setTimeout(secs);
 		mMainloopTimeout->start(state);
 	}
@@ -4173,7 +4199,8 @@ void LLAppViewer::pingMainloopTimeout(const std::string& state, F32 secs)
 	{
 		if(secs < 0.0f)
 		{
-			secs = gSavedSettings.getF32("MainloopTimeoutDefault");
+			static F32 *sMainloopTimeoutDefault = rebind_llcontrol<F32>("MainloopTimeoutDefault", &gSavedSettings, true);
+			secs = *sMainloopTimeoutDefault;
 		}
 
 		mMainloopTimeout->setTimeout(secs);
